@@ -1,9 +1,12 @@
 
+
 # LinkedMe
 
 ## About
 
 LinkedMe is a Chrome extension that extracts education, employment, and volunteering entries from the open LinkedIn profile and turns selected entries into a downloadable animated GIF. Processing happens locally in the browser.
+
+<img width="1280" height="720" alt="linkedme_demo-1" src="https://github.com/user-attachments/assets/30548b53-f29f-410b-8891-b289c1b4186d" />
 
 ## Prerequisites
 
