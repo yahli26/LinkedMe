@@ -1,0 +1,16 @@
+{
+  "name": "linkedme",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.14.0 <23",
+    "npm": ">=10.9.2 <11"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

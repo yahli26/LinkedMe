@@ -1,0 +1,25 @@
+<div componentkey="SyntheticExperienceTopLevelSection">
+  <h2>Experience</h2>
+  <div role="list">
+    <div componentkey="entity-collection-item-synthetic-1">
+      <a href="https://www.linkedin.com/company/90000201/"><figure><img alt="Example Security Labs logo" src="https://media.licdn.com/dms/image/synthetic/example_security_labs.png"></figure></a>
+      <p>Software Developer</p><p>Example Security Labs · Full-time</p><p>Aug 2025 - Present · 1 yr</p>
+    </div>
+    <div componentkey="entity-collection-item-synthetic-2">
+      <a href="https://www.linkedin.com/company/90000202/"><figure><img alt="Atlas Public Systems logo" src="https://media.licdn.com/dms/image/synthetic/atlas_public_systems.png"></figure></a>
+      <p>Software Developer</p><p>Atlas Public Systems · Part-time</p><p>Jan 2025 - Jun 2025 · 6 mos</p>
+    </div>
+    <div componentkey="entity-collection-item-synthetic-3">
+      <a href="https://www.linkedin.com/company/90000203/"><figure><img alt="Northwind Research Institute logo" src="https://media.licdn.com/dms/image/synthetic/northwind_research.png"></figure></a>
+      <p>Data Engineer</p><p>Northwind Research Institute · Part-time</p><p>Nov 2024 - Jun 2025 · 8 mos</p>
+    </div>
+    <div componentkey="entity-collection-item-synthetic-4">
+      <a href="https://www.linkedin.com/company/90000204/"><figure><img alt="Example Health Center logo" src="https://media.licdn.com/dms/image/synthetic/example_health_center.png"></figure></a>
+      <p>Software Developer</p><p>Example Health Center · Part-time</p><p>Oct 2023 - Jan 2024 · 4 mos</p>
+    </div>
+    <div componentkey="entity-collection-item-synthetic-5">
+      <a href="https://www.linkedin.com/company/90000205/"><figure><img alt="Aurora Weather Service logo" src="https://media.licdn.com/dms/image/synthetic/aurora_weather_service.png"></figure></a>
+      <p>Software Developer</p><p>Aurora Weather Service · Full-time</p><p>Dec 2020 - Aug 2023 · 2 yrs 9 mos</p>
+    </div>
+  </div>
+</div>

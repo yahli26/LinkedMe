@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# JavaScript test and build output
+coverage/
+dist/
+build/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime output
+*.log
+*.tmp
+
+# Generated or duplicate videos; the two packaged runtime templates are allowed
+*.mp4
+!extension/assets/1_sign_video_12_frames_final.mp4
+!extension/assets/3_signs_video_12_frames_final.mp4
+
+# Local test fixtures copied from real LinkedIn profiles
+tests/fixtures/real/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

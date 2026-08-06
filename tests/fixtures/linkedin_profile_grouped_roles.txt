@@ -1,0 +1,17 @@
+<section componentkey="SyntheticExperienceTopLevelSection">
+  <h2>Experience</h2>
+  <div componentkey="entity-collection-item-synthetic-grouped-roles">
+    <a href="https://www.linkedin.com/company/90000101/">
+      <figure><img alt="Northstar Cloud logo" src="https://media.licdn.com/dms/image/synthetic/northstar_cloud_logo.png"></figure>
+      <p>Northstar Cloud</p>
+      <p>10 yrs 10 mos</p>
+    </a>
+    <ul>
+      <li><p>Lead Product Engineer, Workflow Tools</p><p>Feb 2024 - Present</p></li>
+      <li><p>Engineering Manager, Platform Services</p><p>Oct 2021 - Feb 2024</p></li>
+      <li><p>Senior Software Engineer, Developer Experience</p><p>May 2019 - Oct 2021</p></li>
+      <li><p>Software Engineer, Internal Tools</p><p>Aug 2017 - May 2019</p></li>
+      <li><p>Associate Software Engineer</p><p>Nov 2015 - Aug 2017</p></li>
+    </ul>
+  </div>
+</section>

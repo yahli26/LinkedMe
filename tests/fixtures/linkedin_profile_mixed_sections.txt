@@ -1,0 +1,38 @@
+<section componentkey="SyntheticExperienceTopLevelSection">
+  <h2>Experience</h2>
+  <div role="list">
+    <div role="listitem">
+      <a href="https://www.linkedin.com/company/90000301/"><figure><img alt="Career Pause Collective logo" src="https://media.licdn.com/dms/image/synthetic/career_pause_collective.png"></figure></a>
+      <p>Professional Hiatus</p><p>Career Pause Collective · Seasonal</p><p>2018 - Present</p>
+    </div>
+    <div role="listitem">
+      <figure aria-label="Fictional Summer Camp logo"></figure>
+      <p>Brand Ambassador</p><p>Fictional Summer Camp · Part-time</p><p>2024 - 2025</p>
+    </div>
+    <div role="listitem">
+      <a href="https://www.linkedin.com/company/90000302/"><figure><img alt="Example Rewards Group logo" src="https://media.licdn.com/dms/image/synthetic/example_rewards_group.png"></figure></a>
+      <p>Lifecycle Marketing Lead</p><p>Example Rewards Group · Full-time</p><p>2016 - 2017</p>
+    </div>
+    <div role="listitem">
+      <a href="https://www.linkedin.com/company/90000303/"><figure><img alt="Northstar Travel Cooperative logo" src="https://media.licdn.com/dms/image/synthetic/northstar_travel.png"></figure></a>
+      <p>Partner Marketing Manager</p><p>Northstar Travel Cooperative · Full-time</p><p>2009 - 2016</p>
+    </div>
+    <div role="listitem">
+      <a href="https://www.linkedin.com/company/90000304/"><figure><img alt="Blue Harbor Financial logo" src="https://media.licdn.com/dms/image/synthetic/blue_harbor_financial.png"></figure></a>
+      <p>Product Marketing Specialist</p><p>Blue Harbor Financial · Full-time</p><p>2007 - 2009</p>
+    </div>
+  </div>
+</section>
+<section componentkey="SyntheticEducationTopLevelSection">
+  <h2>Education</h2>
+  <div role="list">
+    <div role="listitem">
+      <a href="https://www.linkedin.com/school/90000311/"><figure><img alt="Example School of Business logo" src="https://media.licdn.com/dms/image/synthetic/example_business_school.png"></figure></a>
+      <p>Example School of Business</p><p>Master of Business Administration - MBA, Product Strategy</p>
+    </div>
+    <div role="listitem">
+      <a href="https://www.linkedin.com/school/90000312/"><figure><img alt="Northbridge University logo" src="https://media.licdn.com/dms/image/synthetic/northbridge_university.png"></figure></a>
+      <p>Northbridge University</p><p>Bachelor of Business Administration - BBA</p>
+    </div>
+  </div>
+</section>

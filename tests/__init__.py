@@ -1,0 +1,1 @@
+"""LinkedMe test suite."""

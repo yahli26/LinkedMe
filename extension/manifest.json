@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedMe",
+  "version": "1.0.0",
+  "description": "Extract education, experience, and volunteering data from LinkedIn profiles.",
+  "icons": {
+    "16": "assets/lme_logo_16x16.png",
+    "48": "assets/lme_logo_48x48.png",
+    "128": "assets/lme_logo_128x128.png"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://media.licdn.com/*",
+    "https://static.licdn.com/*"
+  ],
+  "action": {
+    "default_title": "LinkedMe",
+    "default_icon": {
+      "16": "assets/lme_logo_16x16.png",
+      "48": "assets/lme_logo_48x48.png",
+      "128": "assets/lme_logo_128x128.png"
+    },
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/in/*",
+        "https://www.linkedin.com/company/*",
+        "https://www.linkedin.com/school/*",
+        "https://www.linkedin.com/showcase/*"
+      ],
+      "js": ["content/content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/profileExtractor.js",
+        "content/animation.js",
+        "content/panel.js",
+        "content/gifEncoder.worker.js",
+        "extractors/linkedinParsing.js",
+        "extractors/extractEducation.js",
+        "extractors/extractExperience.js",
+        "extractors/extractVolunteering.js",
+        "assets/1_sign_video_12_frames_final.mp4",
+        "assets/3_signs_video_12_frames_final.mp4",
+        "assets/1_sign_track_raw_12_frames.json",
+        "assets/3_sign_tracks_corrected_12_frames.json",
+        "vendor/gifenc/gifenc.esm.js"
+      ],
+      "matches": ["https://www.linkedin.com/*"]
+    }
+  ]
+}
+

@@ -1,0 +1,29 @@
+body {
+  margin: 0;
+  padding: 12px;
+  min-width: 220px;
+  background: #fff;
+  color: #17212b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #fff;
+  background: #0a66c2;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled { cursor: wait; opacity: .65; }
+#extraction-status {
+  display: none;
+  margin: 10px 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+#extraction-status:not(:empty) { display: block; }
+#extraction-status[data-state="pending"] { color: #4f5f6f; }
+#extraction-status[data-state="error"] { color: #b42318; }
