@@ -4,7 +4,7 @@
 
 ## About
 
-LinkedMe is a Chrome extension that extracts education, employment, and volunteering entries from the open LinkedIn profile and turns selected entries into a downloadable MP4 video. Processing happens locally in the browser.
+LinkedMe is a Chrome extension that turns the experience shown on your LinkedIn profile page into a downloadable MP4 video. It extracts your education, employment, and volunteering entries, lets you choose and reorder them, and generates the video locally in your browser.
 
 ## Demo
 
@@ -33,8 +33,8 @@ The demo resolution is compressed due to GitHub constraints.
 2. Open `chrome://extensions`.
 3. Enable **Developer mode** and select **Load unpacked**.
 4. Select the `extension` directory.
-5. Open a LinkedIn profile you are authorized to process.
-6. Open LinkedMe, select **Extract**, choose and reorder the entries, then select **Generate Video** to preview the 3.5 Mbps H.264 MP4 video. Select **Download** beneath the preview to save it.
+5. Open a LinkedIn profile you are authorized to process, and scroll down to the Expirience section.
+6. Open LinkedMe, select **Extract**, choose and reorder your entries, then select **Generate Video**. Preview the video and select **Download** to save it.
 
 Run the JavaScript tests with:
 

@@ -175,7 +175,6 @@ export function extractLinkedInProfile(sections = []) {
   const counts = countItems(data);
 
   return {
-    profileUrl: window.location.href,
     extractedAt: new Date().toISOString(),
     data,
     counts,

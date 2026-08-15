@@ -1,4 +1,5 @@
 import { sortEntriesChronologically } from "../extractors/linkedinParsing.js";
+import { ArrayBufferTarget, Muxer } from "../vendor/mp4-muxer/mp4-muxer.mjs";
 
 const PANEL_ID = "linkedme-floating-panel";
 const STYLE_ID = "linkedme-floating-panel-style";
@@ -10,20 +11,31 @@ const OUTPUT_FRAME_COUNT = 120;
 const OUTPUT_WIDTH = 1280;
 const OUTPUT_HEIGHT = 720;
 const MEDIA_TIMEOUT_MS = 15000;
-const VIDEO_STOP_FLUSH_MS = 120;
 const MP4_MIME_TYPE_CANDIDATES = Object.freeze([
+  'video/mp4;codecs="avc1.64001F"',
+  'video/mp4;codecs="avc1.4D401F"',
   'video/mp4;codecs="avc1.42E01F"',
   'video/mp4;codecs="avc1.42001F"',
   "video/mp4",
 ]);
+const H264_CODEC_CANDIDATES = Object.freeze([
+  "avc1.64001F",
+  "avc1.4D401F",
+  "avc1.42E01F",
+]);
+const ENCODER_QUEUE_LIMIT = 4;
 export const VIDEO_EXPORT_PROFILE = Object.freeze({
-  bitrate: 3_500_000,
+  codec: H264_CODEC_CANDIDATES[0],
+  quantizer: 22,
+  bitrate: 1_800_000,
+  keyFrameInterval: 60,
   buttonLabel: "Generate Video",
   filenameSuffix: "video",
 });
 const TRACKING_NUMBER_FIELDS = [
   "left", "top", "right", "bottom", "width", "height", "center_x", "center_y",
 ];
+const SUPPORTED_LOGO_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TEMPLATE_CONFIG = Object.freeze({
   one: Object.freeze({
     mode: "one",
@@ -271,11 +283,58 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw createAbortError();
 }
 
-async function getSafeLogoBlob(entry, signal) {
-  const candidates = [...new Set([
+function logoCandidateResolution(url) {
+  if (/^(?:data|blob):/i.test(url)) return Number.MAX_SAFE_INTEGER;
+  const squareMatch = url.match(
+    /(?:company|school|organization)-logo_(\d+)_(\d+)/i
+  );
+  if (squareMatch) {
+    return Number(squareMatch[1]) * Number(squareMatch[2]);
+  }
+  const cropMatch = url.match(/img-crop_(\d+)/i);
+  return cropMatch ? Number(cropMatch[1]) ** 2 : 0;
+}
+
+export function rankLogoUrlCandidates(candidates) {
+  return [...new Set(candidates.filter(Boolean))]
+    .map((url, index) => ({ url, index, resolution: logoCandidateResolution(url) }))
+    .sort((left, right) =>
+      right.resolution - left.resolution || left.index - right.index
+    )
+    .map(({ url }) => url);
+}
+
+function highResolutionLogoVariants(url) {
+  if (!/media\.licdn\.com/i.test(url)) return [];
+  const variants = [];
+  for (const size of [800, 400, 300, 200]) {
+    variants.push(
+      url.replace(/(?:company|school|organization)-logo_\d+_\d+/gi, (match) =>
+        match.replace(/\d+_\d+$/, `${size}_${size}`)
+      ),
+      url.replace(/img-crop_\d+/gi, `img-crop_${size}`)
+    );
+  }
+  return variants.filter((variant) => variant !== url);
+}
+
+export function buildVideoLogoUrlCandidates(entry) {
+  const supplied = [
     ...(entry.logoUrlCandidates || []),
     entry.logoUrl,
-  ].filter(Boolean))];
+  ].filter(Boolean);
+  return rankLogoUrlCandidates(
+    supplied.flatMap((url) => [url, ...highResolutionLogoVariants(url)])
+  );
+}
+
+function isSupportedLogoBlob(blob) {
+  const contentType = (blob.type || "").toLowerCase().split(";")[0];
+  return SUPPORTED_LOGO_MIME_TYPES.has(contentType);
+}
+
+async function getSafeLogoBlob(entry, signal) {
+  const candidates = buildVideoLogoUrlCandidates(entry);
   if (!candidates.length) {
     throw new Error("No LinkedIn logo was found for " + (entry.organization || entry.title) + ".");
   }
@@ -285,7 +344,10 @@ async function getSafeLogoBlob(entry, signal) {
     if (url.startsWith("data:") || url.startsWith("blob:")) {
       try {
         const response = await fetch(url, { signal });
-        if (response.ok) return await response.blob();
+        if (response.ok) {
+          const blob = await response.blob();
+          if (isSupportedLogoBlob(blob)) return blob;
+        }
       } catch (error) {
         if (error?.name === "AbortError") throw error;
       }
@@ -302,7 +364,10 @@ async function getSafeLogoBlob(entry, signal) {
       throwIfAborted(signal);
       if (response?.type === "LINKEDME_IMAGE_FETCH_SUCCESS" && response.payload?.dataUrl) {
         const dataResponse = await fetch(response.payload.dataUrl, { signal });
-        if (dataResponse.ok) return await dataResponse.blob();
+        if (dataResponse.ok) {
+          const blob = await dataResponse.blob();
+          if (isSupportedLogoBlob(blob)) return blob;
+        }
       }
     } catch (error) {
       if (error?.name === "AbortError") throw error;
@@ -320,7 +385,7 @@ async function loadLogoImages(selectedEntries, signal) {
     for (const entry of selectedEntries) {
       const blob = await getSafeLogoBlob(entry, signal);
       const contentType = (blob.type || "").toLowerCase().split(";")[0];
-      if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+      if (!SUPPORTED_LOGO_MIME_TYPES.has(contentType)) {
         throw new Error("The logo for " + (entry.organization || entry.title) +
           " is not a PNG, JPEG, or WebP image.");
       }
@@ -483,6 +548,61 @@ export function selectMp4RecorderMimeType(Recorder = globalThis.MediaRecorder) {
   return mimeType;
 }
 
+function baseVideoEncoderConfig(codec) {
+  return {
+    codec,
+    width: OUTPUT_WIDTH,
+    height: OUTPUT_HEIGHT,
+    framerate: OUTPUT_FPS,
+    hardwareAcceleration: "no-preference",
+    latencyMode: "quality",
+    avc: { format: "avc" },
+  };
+}
+
+async function supportedVideoEncoderConfig(Encoder, config) {
+  try {
+    const result = await Encoder.isConfigSupported(config);
+    return result?.supported ? result.config || config : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export async function selectH264EncoderConfig(
+  Encoder = globalThis.VideoEncoder,
+  profile = VIDEO_EXPORT_PROFILE
+) {
+  if (!Encoder || typeof Encoder.isConfigSupported !== "function") {
+    throw new Error("This version of Chrome does not provide the WebCodecs video encoder.");
+  }
+
+  for (const codec of H264_CODEC_CANDIDATES) {
+    const config = await supportedVideoEncoderConfig(Encoder, {
+      ...baseVideoEncoderConfig(codec),
+      bitrateMode: "quantizer",
+    });
+    if (config?.bitrateMode === "quantizer") {
+      return { config, codec, constantQuality: true, quantizer: profile.quantizer };
+    }
+  }
+
+  for (const bitrateMode of ["constant", "variable"]) {
+    for (const codec of H264_CODEC_CANDIDATES) {
+      const config = await supportedVideoEncoderConfig(Encoder, {
+        ...baseVideoEncoderConfig(codec),
+        bitrate: profile.bitrate,
+        bitrateMode,
+      });
+      if (config && (config.bitrateMode === bitrateMode || bitrateMode === "variable")) {
+        return { config, codec, constantQuality: false, quantizer: null };
+      }
+    }
+  }
+
+  throw new Error("Chrome does not provide a compatible H.264 WebCodecs encoder.");
+}
+
 export async function assertMp4Blob(blob) {
   if (!(blob instanceof Blob) || blob.size < 12 || !/^video\/mp4(?:;|$)/i.test(blob.type)) {
     throw new Error("The video encoder returned an empty or invalid MP4 file.");
@@ -494,9 +614,16 @@ export async function assertMp4Blob(blob) {
   }
 }
 
+export function measuredVideoBitrate(blob, durationSeconds = OUTPUT_FRAME_COUNT / OUTPUT_FPS) {
+  return Math.round(blob.size * 8 / durationSeconds);
+}
+
 function cleanupVideoGenerationResources(session) {
   if (!session || session.cleaned) return;
   session.cleaned = true;
+  if (session.encoder?.state && session.encoder.state !== "closed") {
+    try { session.encoder.close(); } catch (_error) { /* Already closed. */ }
+  }
   if (session.videoFrameCallback !== null && session.video?.cancelVideoFrameCallback) {
     session.video.cancelVideoFrameCallback(session.videoFrameCallback);
   }
@@ -524,7 +651,118 @@ function frameIndexFromMediaTime(mediaTime) {
   ));
 }
 
-async function recordCanvasAsMp4({
+async function waitForEncoderCapacity(encoder, signal) {
+  while (encoder.encodeQueueSize >= ENCODER_QUEUE_LIMIT) {
+    throwIfAborted(signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+export function videoEncodeOptions(frameIndex, selection, profile = VIDEO_EXPORT_PROFILE) {
+  const options = {
+    keyFrame: frameIndex === 0 || frameIndex % profile.keyFrameInterval === 0,
+  };
+  if (selection.constantQuality) {
+    options.avc = { quantizer: selection.quantizer };
+  }
+  return options;
+}
+
+async function encodeCanvasWithWebCodecs({
+  session,
+  context,
+  tracking,
+  trackingIndex,
+  template,
+  profile,
+  signal,
+  onProgress,
+  selection,
+  Encoder = globalThis.VideoEncoder,
+  Frame = globalThis.VideoFrame,
+}) {
+  if (typeof Frame !== "function") {
+    throw new Error("This version of Chrome does not provide WebCodecs video frames.");
+  }
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    video: {
+      codec: "avc",
+      width: OUTPUT_WIDTH,
+      height: OUTPUT_HEIGHT,
+      frameRate: OUTPUT_FPS,
+    },
+    fastStart: "in-memory",
+  });
+  let encoderFailure = null;
+  session.encoder = new Encoder({
+    output(chunk, metadata) {
+      if (encoderFailure) return;
+      try {
+        muxer.addVideoChunk(chunk, metadata);
+      } catch (error) {
+        encoderFailure = error;
+      }
+    },
+    error(error) {
+      encoderFailure = error;
+    },
+  });
+  session.encoder.configure(selection.config);
+
+  const nominalFrameDuration = 1_000_000 / OUTPUT_FPS;
+  for (let frameIndex = 0; frameIndex < OUTPUT_FRAME_COUNT; frameIndex += 1) {
+    throwIfAborted(signal);
+    if (encoderFailure) throw encoderFailure;
+    await seekVideoToFrame(session.video, frameIndex, signal);
+    context.drawImage(
+      session.video, 0, 0, session.canvas.width, session.canvas.height
+    );
+    drawTrackedLogos(
+      context,
+      session.logos,
+      tracking,
+      trackingIndex,
+      template.signOrder,
+      frameIndex
+    );
+
+    await waitForEncoderCapacity(session.encoder, signal);
+    if (encoderFailure) throw encoderFailure;
+    const timestamp = Math.round(frameIndex * nominalFrameDuration);
+    const nextTimestamp = Math.round((frameIndex + 1) * nominalFrameDuration);
+    const frame = new Frame(session.canvas, {
+      timestamp,
+      duration: nextTimestamp - timestamp,
+    });
+    try {
+      session.encoder.encode(frame, videoEncodeOptions(frameIndex, selection, profile));
+    } finally {
+      frame.close();
+    }
+    onProgress?.(
+      "Rendering frame " + (frameIndex + 1) + " of " + OUTPUT_FRAME_COUNT + "…",
+      10 + ((frameIndex + 1) / OUTPUT_FRAME_COUNT) * 85
+    );
+  }
+
+  onProgress?.("Finalizing MP4…", 97);
+  await session.encoder.flush();
+  if (encoderFailure) throw encoderFailure;
+  muxer.finalize();
+  const blob = new Blob([target.buffer], { type: "video/mp4" });
+  return {
+    blob,
+    actualBitrate: measuredVideoBitrate(blob),
+    codec: selection.codec,
+    constantQuality: selection.constantQuality,
+    quantizer: selection.quantizer,
+  };
+}
+
+async function recordCanvasWithMediaRecorder({
   session,
   context,
   tracking,
@@ -616,9 +854,13 @@ async function recordCanvasAsMp4({
       settled = true;
       removeListeners();
       const outputType = session.recorder.mimeType || mimeType;
+      const blob = new Blob(chunks, { type: outputType });
       resolve({
-        blob: new Blob(chunks, { type: outputType }),
-        actualBitrate: session.recorder.videoBitsPerSecond || profile.bitrate,
+        blob,
+        actualBitrate: measuredVideoBitrate(blob),
+        codec: mimeType,
+        constantQuality: false,
+        quantizer: null,
       });
     };
     const onEnded = () => {
@@ -653,6 +895,29 @@ async function recordCanvasAsMp4({
   return recording;
 }
 
+async function recordCanvasAsMp4(options) {
+  const Encoder = globalThis.VideoEncoder;
+  const Frame = globalThis.VideoFrame;
+  if (Encoder && Frame) {
+    try {
+      const selection = await selectH264EncoderConfig(Encoder, options.profile);
+      return await encodeCanvasWithWebCodecs({
+        ...options,
+        selection,
+        Encoder,
+        Frame,
+      });
+    } catch (error) {
+      if (!/WebCodecs.*encoder|compatible H\.264/i.test(error?.message || "")) {
+        throw error;
+      }
+    }
+  }
+
+  options.onProgress?.("Using the compatible H.264 MP4 encoder…", 9);
+  return recordCanvasWithMediaRecorder(options);
+}
+
 async function generateMp4Video({
   template,
   selectedEntries,
@@ -666,6 +931,7 @@ async function generateMp4Video({
     video: null,
     videoUrl: null,
     canvas: null,
+    encoder: null,
     stream: null,
     recorder: null,
     videoFrameCallback: null,
@@ -688,6 +954,8 @@ async function generateMp4Video({
     session.canvas.height = tracking.video.height;
     const context = session.canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Chrome could not create the video rendering canvas.");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
 
     context.drawImage(
       session.video, 0, 0, session.canvas.width, session.canvas.height

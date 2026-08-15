@@ -98,7 +98,7 @@ test("profileExtractor extracts accurate section data from LinkedIn fixtures", a
 
   const result = extractLinkedInProfile();
 
-  assert.equal(result.profileUrl, linkedInProfileUrl);
+  assert.equal("profileUrl" in result, false);
   assert.match(result.extractedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(result.counts, {
     education: 1,
@@ -1339,32 +1339,81 @@ test("Add New Job is re-enabled after an extraction error", async () => {
   assert.equal(status.classList.contains("is-error"), true);
 });
 
-test("MP4 export uses the 3.5 Mbps profile and requires an H.264 recorder", async () => {
+test("MP4 export prefers H.264 High constant quality at QP 22", async () => {
   const {
     VIDEO_EXPORT_PROFILE,
     assertMp4Blob,
+    measuredVideoBitrate,
+    selectH264EncoderConfig,
     selectMp4RecorderMimeType,
+    videoEncodeOptions,
   } = await import(
     pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
       "?mp4-profile=" + Date.now()
   );
 
-  assert.equal(VIDEO_EXPORT_PROFILE.bitrate, 3_500_000);
+  assert.equal(VIDEO_EXPORT_PROFILE.codec, "avc1.64001F");
+  assert.equal(VIDEO_EXPORT_PROFILE.quantizer, 22);
+  assert.equal(VIDEO_EXPORT_PROFILE.bitrate, 1_800_000);
+  assert.equal(VIDEO_EXPORT_PROFILE.keyFrameInterval, 60);
   assert.equal(VIDEO_EXPORT_PROFILE.buttonLabel, "Generate Video");
   assert.equal(VIDEO_EXPORT_PROFILE.filenameSuffix, "video");
+
+  const checkedConfigs = [];
+  class MockVideoEncoder {
+    static async isConfigSupported(config) {
+      checkedConfigs.push(config);
+      return {
+        supported: config.codec === "avc1.64001F" && config.bitrateMode === "quantizer",
+        config,
+      };
+    }
+  }
+  const selection = await selectH264EncoderConfig(MockVideoEncoder);
+  assert.equal(selection.codec, "avc1.64001F");
+  assert.equal(selection.constantQuality, true);
+  assert.equal(selection.quantizer, 22);
+  assert.equal(checkedConfigs.length, 1);
+  assert.equal(checkedConfigs[0].latencyMode, "quality");
+  assert.deepEqual(checkedConfigs[0].avc, { format: "avc" });
+  assert.deepEqual(videoEncodeOptions(0, selection), {
+    keyFrame: true,
+    avc: { quantizer: 22 },
+  });
+  assert.deepEqual(videoEncodeOptions(59, selection), {
+    keyFrame: false,
+    avc: { quantizer: 22 },
+  });
+  assert.deepEqual(videoEncodeOptions(60, selection), {
+    keyFrame: true,
+    avc: { quantizer: 22 },
+  });
+
+  class MockBitrateVideoEncoder {
+    static async isConfigSupported(config) {
+      return {
+        supported: config.codec === "avc1.64001F" && config.bitrateMode === "constant",
+        config,
+      };
+    }
+  }
+  const bitrateFallback = await selectH264EncoderConfig(MockBitrateVideoEncoder);
+  assert.equal(bitrateFallback.codec, "avc1.64001F");
+  assert.equal(bitrateFallback.constantQuality, false);
+  assert.equal(bitrateFallback.config.bitrate, 1_800_000);
 
   const checkedTypes = [];
   class MockRecorder {
     static isTypeSupported(mimeType) {
       checkedTypes.push(mimeType);
-      return mimeType === 'video/mp4;codecs="avc1.42E01F"';
+      return mimeType === 'video/mp4;codecs="avc1.64001F"';
     }
   }
   assert.equal(
     selectMp4RecorderMimeType(MockRecorder),
-    'video/mp4;codecs="avc1.42E01F"'
+    'video/mp4;codecs="avc1.64001F"'
   );
-  assert.deepEqual(checkedTypes, ['video/mp4;codecs="avc1.42E01F"']);
+  assert.deepEqual(checkedTypes, ['video/mp4;codecs="avc1.64001F"']);
   assert.throws(
     () => selectMp4RecorderMimeType(class { static isTypeSupported() { return false; } }),
     /H\.264 MP4 encoder/
@@ -1375,10 +1424,31 @@ test("MP4 export uses the 3.5 Mbps profile and requires an H.264 recorder", asyn
     0x66, 0x74, 0x79, 0x70,
     0x69, 0x73, 0x6f, 0x6d,
   ]);
-  await assertMp4Blob(new Blob([validHeader], { type: "video/mp4" }));
+  const validBlob = new Blob([validHeader], { type: "video/mp4" });
+  await assertMp4Blob(validBlob);
+  assert.equal(measuredVideoBitrate(validBlob, 2), 48);
   await assert.rejects(
     assertMp4Blob(new Blob([new Uint8Array(12)], { type: "video/mp4" })),
     /ftyp header/
+  );
+});
+
+test("video export tries the highest-resolution logo URL first", async () => {
+  const { buildVideoLogoUrlCandidates, rankLogoUrlCandidates } = await import(
+    pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
+      "?logo-resolution=" + Date.now()
+  );
+  const urls = [
+    "https://media.licdn.com/dms/image/company-logo_100_100/original",
+    "https://media.licdn.com/dms/image/company-logo_400_400/original",
+    "https://media.licdn.com/dms/image/company-logo_800_800/original",
+    "https://media.licdn.com/dms/image/company-logo_200_200/original",
+  ];
+
+  assert.deepEqual(rankLogoUrlCandidates(urls), [urls[2], urls[1], urls[3], urls[0]]);
+  assert.match(
+    buildVideoLogoUrlCandidates({ logoUrl: urls[0] })[0],
+    /company-logo_800_800/
   );
 });
 
@@ -1928,7 +1998,24 @@ test("manual job extraction rejects unsupported URLs before DOM polling", async 
 });
 test("background persists a manually added job with the current YYYY/MM date", async () => {
   let messageListener;
-  const storageState = {};
+  const storageState = {
+    "linkedme.latestStatus.v1": {
+      type: "LINKEDME_STATUS_UPDATE",
+      version: 1,
+      requestId: "stored-profile",
+      payload: {
+        status: "completed",
+        counts: { education: 0, experience: 0, volunteering: 0 },
+        error: null,
+        profile: {
+          profileUrl: linkedInProfileUrl,
+          extractedAt: "2026-08-15T00:00:00.000Z",
+          data: { education: [], experience: [], volunteering: [] },
+          counts: { education: 0, experience: 0, volunteering: 0 },
+        },
+      },
+    },
+  };
   globalThis.chrome = {
     storage: {
       local: {
@@ -1985,6 +2072,10 @@ test("background persists a manually added job with the current YYYY/MM date", a
   assert.equal(
     storageState["linkedme.latestStatus.v1"].payload.profile.data.experience[0].companyName,
     "Persistent Company"
+  );
+  assert.equal(
+    "profileUrl" in storageState["linkedme.latestStatus.v1"].payload.profile,
+    false
   );
 
   let reloadedListener;
