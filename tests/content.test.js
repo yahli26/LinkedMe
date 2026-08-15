@@ -98,7 +98,7 @@ test("profileExtractor extracts accurate section data from LinkedIn fixtures", a
 
   const result = extractLinkedInProfile();
 
-  assert.equal(result.profileUrl, linkedInProfileUrl);
+  assert.equal("profileUrl" in result, false);
   assert.match(result.extractedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(result.counts, {
     education: 1,
@@ -1091,7 +1091,7 @@ test("floating panel renders the full ordered result and switches selection mode
   assert.ok(panel);
   assert.equal(panel.querySelector(".linkedme-panel-status").textContent, "Extraction completed.");
   assert.equal(panel.getAttribute("aria-label"), "LinkedMe panel");
-  assert.equal(panel.querySelectorAll("button").length, 5);
+  assert.equal(panel.querySelectorAll("button").length, 6);
   const infoButton = panel.querySelector(".extracted-profile-info-button");
   const infoIcon = infoButton.querySelector(".extracted-profile-info-icon");
   assert.equal(infoIcon.getAttribute("viewBox"), "0 0 16 16");
@@ -1135,10 +1135,16 @@ test("floating panel renders the full ordered result and switches selection mode
   assert.equal(panel.querySelectorAll(".is-selected-for-video").length, 3);
   assert.equal(panel.querySelectorAll(".is-outside-video").length, 1);
   assert.equal(panel.querySelectorAll(".experience-selection-divider").length, 1);
-  assert.equal(panel.querySelector(".generation-loading").hidden, true);
-  assert.equal(panel.querySelector(".generation-progress").max, 100);
-  assert.equal(panel.querySelector(".generation-result").hidden, true);
-  assert.equal(panel.querySelector(".download-gif").textContent, "Download GIF");
+  assert.equal(panel.querySelector(".generation-loading"), null);
+  assert.equal(panel.querySelector(".generation-result"), null);
+  assert.equal(panel.querySelector(".generate-video").textContent, "Generate Video");
+  assert.equal(panel.querySelector(".video-generation-progress").hidden, true);
+  assert.equal(panel.querySelector(".generated-video").hidden, true);
+  assert.equal(panel.querySelector(".download-video").hidden, true);
+  assert.equal(panel.querySelector(".video-export-grid"), null);
+  assert.equal(panel.querySelector(".video-export-card"), null);
+  assert.equal(panel.querySelector(".video-export-status"), null);
+  assert.equal(panel.querySelector("#linkedme-generate-video"), null);
 
   const toggle = panel.querySelector("#linkedme-single-item-video-mode");
   toggle.checked = true;
@@ -1147,7 +1153,7 @@ test("floating panel renders the full ordered result and switches selection mode
   assert.equal(panel.querySelector(".video-mode-toggle span").textContent, "1-sign mode");
   assert.equal(panel.querySelectorAll(".is-selected-for-video").length, 1);
   assert.equal(panel.querySelectorAll(".is-outside-video").length, 3);
-  assert.equal(panel.querySelector("#linkedme-generate-video").disabled, false);
+  assert.equal(panel.querySelectorAll(".generate-video:disabled").length, 0);
 
   const addButton = panel.querySelectorAll(".linkedme-panel-actions button")[1];
   addButton.click();
@@ -1195,6 +1201,117 @@ test("floating panel renders the full ordered result and switches selection mode
   assert.equal(document.getElementById("linkedme-floating-panel"), panel);
 });
 
+test("video generation previews first and downloads only after explicit confirmation", async () => {
+  installDom("<main><h1>Example Person</h1></main>");
+  globalThis.chrome = {
+    runtime: {
+      getURL(resourcePath) {
+        return pathToFileURL(resolve(projectRoot, "extension", resourcePath)).href;
+      },
+    },
+  };
+
+  let resolveVideo;
+  const calls = [];
+  const downloads = [];
+  const videoResult = new Promise((resolveResult) => {
+    resolveVideo = resolveResult;
+  });
+  const { createFloatingPanelController } = await import(
+    pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
+      "?single-video-pipeline=" + Date.now()
+  );
+  const controller = createFloatingPanelController({
+    generateVideo(request) {
+      calls.push(request);
+      return videoResult;
+    },
+    triggerDownload(url, filename) {
+      downloads.push({ url, filename });
+    },
+  });
+  controller.showProfile({
+    data: {
+      experience: [
+        {
+          title: "First",
+          companyName: "First Co",
+          startDate: "2026/01",
+          logoUrl: "https://media.licdn.com/first.png",
+        },
+        {
+          title: "Second",
+          companyName: "Second Co",
+          startDate: "2025/01",
+          logoUrl: "https://media.licdn.com/second.png",
+        },
+        {
+          title: "Third",
+          companyName: "Third Co",
+          startDate: "2024/01",
+          logoUrl: "https://media.licdn.com/third.png",
+        },
+      ],
+      education: [],
+      volunteering: [],
+    },
+  });
+
+  const panel = document.getElementById("linkedme-floating-panel");
+  const generateButton = panel.querySelector(".generate-video");
+  const downloadButton = panel.querySelector(".download-video");
+  const preview = panel.querySelector(".generated-video");
+  let previewPlayCalls = 0;
+  preview.play = () => {
+    previewPlayCalls += 1;
+    return Promise.resolve();
+  };
+  generateButton.click();
+  assert.equal(generateButton.disabled, true);
+  assert.equal(generateButton.textContent, "Creating video…");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].selectedEntries.length, 3);
+  assert.equal(panel.querySelector("#linkedme-single-item-video-mode").disabled, true);
+  const progress = panel.querySelector(".video-generation-progress");
+  const progressBar = panel.querySelector(".video-generation-bar");
+  const progressPercentage = panel.querySelector(".video-generation-percentage");
+  assert.equal(panel.querySelector(".video-generation-stage"), null);
+  assert.equal(progress.hidden, false);
+  assert.equal(progressBar.value, 0);
+  assert.equal(progressPercentage.textContent, "0%");
+
+  calls[0].onProgress("Rendering video frames…", 54.6);
+  assert.equal(progressBar.value, 55);
+  assert.equal(progressPercentage.textContent, "55%");
+
+  resolveVideo({
+    blob: new Blob([new Uint8Array(32)], { type: "video/mp4" }),
+    actualBitrate: 3_500_000,
+  });
+  await waitForCondition(() => preview.hidden === false);
+  assert.equal(downloads.length, 0);
+  assert.equal(progress.hidden, false);
+  assert.equal(progressBar.value, 100);
+  assert.equal(progressPercentage.textContent, "100%");
+  assert.match(preview.src, /^blob:/);
+  assert.equal(preview.autoplay, true);
+  assert.equal(preview.muted, true);
+  assert.equal(previewPlayCalls, 1);
+  assert.equal(downloadButton.hidden, false);
+  assert.equal(downloadButton.textContent, "Download");
+  assert.equal(downloadButton.querySelector(".download-video-icon").getAttribute("viewBox"), "0 0 24 24");
+  assert.equal(downloadButton.querySelector(".download-video-icon").getAttribute("aria-hidden"), "true");
+  assert.equal(preview.nextElementSibling, downloadButton);
+  assert.equal(generateButton.disabled, false);
+  assert.equal(generateButton.textContent, "Generate Video");
+  assert.equal(panel.querySelector("#linkedme-single-item-video-mode").disabled, false);
+  assert.equal(panel.querySelector(".video-export-status"), null);
+
+  downloadButton.click();
+  assert.equal(downloads.length, 1);
+  assert.match(downloads[0].filename, /-video-.*\.mp4$/);
+});
+
 test("Add New Job is re-enabled after an extraction error", async () => {
   installDom("<main></main>", "https://www.linkedin.com/feed/");
   const expectedMessage =
@@ -1222,84 +1339,117 @@ test("Add New Job is re-enabled after an extraction error", async () => {
   assert.equal(status.classList.contains("is-error"), true);
 });
 
-test("GIF encoder starts through a blob bootstrap instead of a cross-origin extension URL", async () => {
-  const originalWorker = globalThis.Worker;
-  const originalCreateObjectURL = URL.createObjectURL;
-  const originalRevokeObjectURL = URL.revokeObjectURL;
-  const workerModuleUrl =
-    "chrome-extension://test-extension/content/gifEncoder.worker.js";
-  let bootstrapBlob;
-  const revokedUrls = [];
-  const constructedWorkers = [];
+test("MP4 export prefers H.264 High constant quality at QP 22", async () => {
+  const {
+    VIDEO_EXPORT_PROFILE,
+    assertMp4Blob,
+    measuredVideoBitrate,
+    selectH264EncoderConfig,
+    selectMp4RecorderMimeType,
+    videoEncodeOptions,
+  } = await import(
+    pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
+      "?mp4-profile=" + Date.now()
+  );
 
-  class MockWorker {
-    constructor(url, options) {
-      this.url = url;
-      this.options = options;
-      this.listeners = new Map();
-      this.messages = [];
-      this.terminated = false;
-      constructedWorkers.push(this);
-    }
+  assert.equal(VIDEO_EXPORT_PROFILE.codec, "avc1.64001F");
+  assert.equal(VIDEO_EXPORT_PROFILE.quantizer, 22);
+  assert.equal(VIDEO_EXPORT_PROFILE.bitrate, 1_800_000);
+  assert.equal(VIDEO_EXPORT_PROFILE.keyFrameInterval, 60);
+  assert.equal(VIDEO_EXPORT_PROFILE.buttonLabel, "Generate Video");
+  assert.equal(VIDEO_EXPORT_PROFILE.filenameSuffix, "video");
 
-    addEventListener(type, listener) {
-      this.listeners.set(type, listener);
-    }
-
-    postMessage(message) {
-      this.messages.push(message);
-      if (message.type === "init") {
-        queueMicrotask(() => {
-          this.listeners.get("message")?.({
-            data: { id: message.id, type: "ready" },
-          });
-        });
-      }
-    }
-
-    terminate() {
-      this.terminated = true;
+  const checkedConfigs = [];
+  class MockVideoEncoder {
+    static async isConfigSupported(config) {
+      checkedConfigs.push(config);
+      return {
+        supported: config.codec === "avc1.64001F" && config.bitrateMode === "quantizer",
+        config,
+      };
     }
   }
+  const selection = await selectH264EncoderConfig(MockVideoEncoder);
+  assert.equal(selection.codec, "avc1.64001F");
+  assert.equal(selection.constantQuality, true);
+  assert.equal(selection.quantizer, 22);
+  assert.equal(checkedConfigs.length, 1);
+  assert.equal(checkedConfigs[0].latencyMode, "quality");
+  assert.deepEqual(checkedConfigs[0].avc, { format: "avc" });
+  assert.deepEqual(videoEncodeOptions(0, selection), {
+    keyFrame: true,
+    avc: { quantizer: 22 },
+  });
+  assert.deepEqual(videoEncodeOptions(59, selection), {
+    keyFrame: false,
+    avc: { quantizer: 22 },
+  });
+  assert.deepEqual(videoEncodeOptions(60, selection), {
+    keyFrame: true,
+    avc: { quantizer: 22 },
+  });
 
-  globalThis.chrome = {
-    runtime: {
-      getURL(resourcePath) {
-        assert.equal(resourcePath, "content/gifEncoder.worker.js");
-        return workerModuleUrl;
-      },
-    },
-  };
-  globalThis.Worker = MockWorker;
-  URL.createObjectURL = (blob) => {
-    bootstrapBlob = blob;
-    return "blob:https://www.linkedin.com/mock-worker";
-  };
-  URL.revokeObjectURL = (url) => revokedUrls.push(url);
-
-  try {
-    const { createGifWorkerClient } = await import(
-      pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
-        "?blob-worker=" + Date.now()
-    );
-    const client = await createGifWorkerClient(new AbortController().signal);
-    const worker = constructedWorkers[0];
-
-    assert.equal(worker.url, "blob:https://www.linkedin.com/mock-worker");
-    assert.deepEqual(worker.options, { type: "module" });
-    assert.equal(await bootstrapBlob.text(), `import ${JSON.stringify(workerModuleUrl)};`);
-    assert.equal(worker.messages[0].type, "init");
-    assert.equal(worker.messages[0].frameCount, 120);
-    assert.deepEqual(revokedUrls, ["blob:https://www.linkedin.com/mock-worker"]);
-
-    client.terminate();
-    assert.equal(worker.terminated, true);
-    assert.equal(revokedUrls.length, 1);
-  } finally {
-    globalThis.Worker = originalWorker;
-    URL.createObjectURL = originalCreateObjectURL;
-    URL.revokeObjectURL = originalRevokeObjectURL;
+  class MockBitrateVideoEncoder {
+    static async isConfigSupported(config) {
+      return {
+        supported: config.codec === "avc1.64001F" && config.bitrateMode === "constant",
+        config,
+      };
+    }
   }
+  const bitrateFallback = await selectH264EncoderConfig(MockBitrateVideoEncoder);
+  assert.equal(bitrateFallback.codec, "avc1.64001F");
+  assert.equal(bitrateFallback.constantQuality, false);
+  assert.equal(bitrateFallback.config.bitrate, 1_800_000);
+
+  const checkedTypes = [];
+  class MockRecorder {
+    static isTypeSupported(mimeType) {
+      checkedTypes.push(mimeType);
+      return mimeType === 'video/mp4;codecs="avc1.64001F"';
+    }
+  }
+  assert.equal(
+    selectMp4RecorderMimeType(MockRecorder),
+    'video/mp4;codecs="avc1.64001F"'
+  );
+  assert.deepEqual(checkedTypes, ['video/mp4;codecs="avc1.64001F"']);
+  assert.throws(
+    () => selectMp4RecorderMimeType(class { static isTypeSupported() { return false; } }),
+    /H\.264 MP4 encoder/
+  );
+
+  const validHeader = new Uint8Array([
+    0, 0, 0, 24,
+    0x66, 0x74, 0x79, 0x70,
+    0x69, 0x73, 0x6f, 0x6d,
+  ]);
+  const validBlob = new Blob([validHeader], { type: "video/mp4" });
+  await assertMp4Blob(validBlob);
+  assert.equal(measuredVideoBitrate(validBlob, 2), 48);
+  await assert.rejects(
+    assertMp4Blob(new Blob([new Uint8Array(12)], { type: "video/mp4" })),
+    /ftyp header/
+  );
+});
+
+test("video export tries the highest-resolution logo URL first", async () => {
+  const { buildVideoLogoUrlCandidates, rankLogoUrlCandidates } = await import(
+    pathToFileURL(resolve(projectRoot, "extension/content/panel.js")).href +
+      "?logo-resolution=" + Date.now()
+  );
+  const urls = [
+    "https://media.licdn.com/dms/image/company-logo_100_100/original",
+    "https://media.licdn.com/dms/image/company-logo_400_400/original",
+    "https://media.licdn.com/dms/image/company-logo_800_800/original",
+    "https://media.licdn.com/dms/image/company-logo_200_200/original",
+  ];
+
+  assert.deepEqual(rankLogoUrlCandidates(urls), [urls[2], urls[1], urls[3], urls[0]]);
+  assert.match(
+    buildVideoLogoUrlCandidates({ logoUrl: urls[0] })[0],
+    /company-logo_800_800/
+  );
 });
 
 test("GIF palette mapping dithers gradients instead of collapsing them into color bands", async () => {
@@ -1848,7 +1998,24 @@ test("manual job extraction rejects unsupported URLs before DOM polling", async 
 });
 test("background persists a manually added job with the current YYYY/MM date", async () => {
   let messageListener;
-  const storageState = {};
+  const storageState = {
+    "linkedme.latestStatus.v1": {
+      type: "LINKEDME_STATUS_UPDATE",
+      version: 1,
+      requestId: "stored-profile",
+      payload: {
+        status: "completed",
+        counts: { education: 0, experience: 0, volunteering: 0 },
+        error: null,
+        profile: {
+          profileUrl: linkedInProfileUrl,
+          extractedAt: "2026-08-15T00:00:00.000Z",
+          data: { education: [], experience: [], volunteering: [] },
+          counts: { education: 0, experience: 0, volunteering: 0 },
+        },
+      },
+    },
+  };
   globalThis.chrome = {
     storage: {
       local: {
@@ -1905,6 +2072,10 @@ test("background persists a manually added job with the current YYYY/MM date", a
   assert.equal(
     storageState["linkedme.latestStatus.v1"].payload.profile.data.experience[0].companyName,
     "Persistent Company"
+  );
+  assert.equal(
+    "profileUrl" in storageState["linkedme.latestStatus.v1"].payload.profile,
+    false
   );
 
   let reloadedListener;

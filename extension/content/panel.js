@@ -1,4 +1,5 @@
 import { sortEntriesChronologically } from "../extractors/linkedinParsing.js";
+import { ArrayBufferTarget, Muxer } from "../vendor/mp4-muxer/mp4-muxer.mjs";
 
 const PANEL_ID = "linkedme-floating-panel";
 const STYLE_ID = "linkedme-floating-panel-style";
@@ -10,9 +11,31 @@ const OUTPUT_FRAME_COUNT = 120;
 const OUTPUT_WIDTH = 1280;
 const OUTPUT_HEIGHT = 720;
 const MEDIA_TIMEOUT_MS = 15000;
+const MP4_MIME_TYPE_CANDIDATES = Object.freeze([
+  'video/mp4;codecs="avc1.64001F"',
+  'video/mp4;codecs="avc1.4D401F"',
+  'video/mp4;codecs="avc1.42E01F"',
+  'video/mp4;codecs="avc1.42001F"',
+  "video/mp4",
+]);
+const H264_CODEC_CANDIDATES = Object.freeze([
+  "avc1.64001F",
+  "avc1.4D401F",
+  "avc1.42E01F",
+]);
+const ENCODER_QUEUE_LIMIT = 4;
+export const VIDEO_EXPORT_PROFILE = Object.freeze({
+  codec: H264_CODEC_CANDIDATES[0],
+  quantizer: 22,
+  bitrate: 1_800_000,
+  keyFrameInterval: 60,
+  buttonLabel: "Generate Video",
+  filenameSuffix: "video",
+});
 const TRACKING_NUMBER_FIELDS = [
   "left", "top", "right", "bottom", "width", "height", "center_x", "center_y",
 ];
+const SUPPORTED_LOGO_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TEMPLATE_CONFIG = Object.freeze({
   one: Object.freeze({
     mode: "one",
@@ -42,7 +65,7 @@ const TEMPLATE_CONFIG = Object.freeze({
 
 export function selectTemplate(mode) {
   const template = TEMPLATE_CONFIG[mode];
-  if (!template) throw new Error("Unknown GIF template mode.");
+  if (!template) throw new Error("Unknown video template mode.");
   return template;
 }
 
@@ -196,18 +219,18 @@ function installStyles() {
     "#" + PANEL_ID + " .experience-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800}",
     "#" + PANEL_ID + " .experience-date{overflow:hidden;color:#4f5f6f;font-size:12px;text-overflow:ellipsis;white-space:nowrap}",
     "#" + PANEL_ID + " .experience-video-badge{width:max-content;margin-top:3px;padding:2px 6px;border-radius:99px;color:#064b8f;background:#dcecff;font-size:11px;font-weight:700}",
-    "#" + PANEL_ID + " .generation-loading[hidden],#" + PANEL_ID + " .generation-result[hidden]{display:none}",
-    "#" + PANEL_ID + " .generation-loading{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:center;padding:12px;border:1px solid #cfe1f5;border-radius:10px;background:#f4f9ff}",
-    "#" + PANEL_ID + " .generation-spinner{width:30px;height:30px;border:3px solid #c9def3;border-top-color:#0a66c2;border-radius:50%;animation:linkedme-spin .8s linear infinite}",
-    "#" + PANEL_ID + " .generation-loading-copy{display:grid;gap:4px;min-width:0}",
-    "#" + PANEL_ID + " .generation-loading-title{font-weight:800;color:#17324d}",
-    "#" + PANEL_ID + " .generation-progress-text{margin:0;color:#4f5f6f;font-size:12px}",
-    "#" + PANEL_ID + " .generation-progress{width:100%;height:7px;accent-color:#0a66c2}",
-    "#" + PANEL_ID + " .generation-result{display:grid;gap:9px;padding-top:2px}",
-    "#" + PANEL_ID + " .generated-gif{display:block;width:100%;height:auto;border:1px solid #d6dee6;border-radius:9px;background:#101820}",
-    "#" + PANEL_ID + " .download-gif{display:block;border-radius:8px;padding:9px 10px;color:#fff;background:#0a66c2;font:inherit;font-weight:800;text-align:center;text-decoration:none}",
+    "#" + PANEL_ID + " .generate-video{width:100%;min-height:54px;padding:8px 7px;line-height:1.25}",
+    "#" + PANEL_ID + " .video-generation-progress[hidden],#" + PANEL_ID + " .generated-video[hidden],#" + PANEL_ID + " .download-video[hidden]{display:none}",
+    "#" + PANEL_ID + " .video-generation-progress{display:grid;gap:5px;padding:1px 2px}",
+    "#" + PANEL_ID + " .video-generation-progress-copy{display:flex;align-items:center;justify-content:flex-end;color:#4f5f6f;font-size:11px;line-height:1.3}",
+    "#" + PANEL_ID + " .video-generation-percentage{color:#0a66c2;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}",
+    "#" + PANEL_ID + " .video-generation-bar{display:block;width:100%;height:6px;accent-color:#0a66c2}",
+    "#" + PANEL_ID + " .generated-video{display:block;width:100%;height:auto;aspect-ratio:16/9;border:1px solid #d6dee6;border-radius:9px;background:#101820}",
+    "#" + PANEL_ID + " .download-video{display:inline-flex;justify-self:center;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:42px;padding:10px 18px;border-radius:999px;background:#0a66c2;box-shadow:0 4px 12px rgba(10,102,194,.28);line-height:1.2;transition:background-color .16s ease,box-shadow .16s ease,transform .16s ease}",
+    "#" + PANEL_ID + " .download-video:hover{background:#084f96;box-shadow:0 6px 16px rgba(10,102,194,.34);transform:translateY(-1px)}",
+    "#" + PANEL_ID + " .download-video:active{box-shadow:0 2px 7px rgba(10,102,194,.24);transform:translateY(0)}",
+    "#" + PANEL_ID + " .download-video-icon{display:block;flex:0 0 auto;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}",
     "#" + PANEL_ID + " .linkedme-panel-status.is-error{color:#b42318}",
-    "@keyframes linkedme-spin{to{transform:rotate(360deg)}}"
   ].join("\n");
   document.documentElement.append(style);
 }
@@ -253,18 +276,65 @@ function makeDraggable(panel, handle) {
 }
 
 function createAbortError() {
-  return new DOMException("GIF generation was cancelled.", "AbortError");
+  return new DOMException("Video generation was cancelled.", "AbortError");
 }
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw createAbortError();
 }
 
-async function getSafeLogoBlob(entry, signal) {
-  const candidates = [...new Set([
+function logoCandidateResolution(url) {
+  if (/^(?:data|blob):/i.test(url)) return Number.MAX_SAFE_INTEGER;
+  const squareMatch = url.match(
+    /(?:company|school|organization)-logo_(\d+)_(\d+)/i
+  );
+  if (squareMatch) {
+    return Number(squareMatch[1]) * Number(squareMatch[2]);
+  }
+  const cropMatch = url.match(/img-crop_(\d+)/i);
+  return cropMatch ? Number(cropMatch[1]) ** 2 : 0;
+}
+
+export function rankLogoUrlCandidates(candidates) {
+  return [...new Set(candidates.filter(Boolean))]
+    .map((url, index) => ({ url, index, resolution: logoCandidateResolution(url) }))
+    .sort((left, right) =>
+      right.resolution - left.resolution || left.index - right.index
+    )
+    .map(({ url }) => url);
+}
+
+function highResolutionLogoVariants(url) {
+  if (!/media\.licdn\.com/i.test(url)) return [];
+  const variants = [];
+  for (const size of [800, 400, 300, 200]) {
+    variants.push(
+      url.replace(/(?:company|school|organization)-logo_\d+_\d+/gi, (match) =>
+        match.replace(/\d+_\d+$/, `${size}_${size}`)
+      ),
+      url.replace(/img-crop_\d+/gi, `img-crop_${size}`)
+    );
+  }
+  return variants.filter((variant) => variant !== url);
+}
+
+export function buildVideoLogoUrlCandidates(entry) {
+  const supplied = [
     ...(entry.logoUrlCandidates || []),
     entry.logoUrl,
-  ].filter(Boolean))];
+  ].filter(Boolean);
+  return rankLogoUrlCandidates(
+    supplied.flatMap((url) => [url, ...highResolutionLogoVariants(url)])
+  );
+}
+
+function isSupportedLogoBlob(blob) {
+  const contentType = (blob.type || "").toLowerCase().split(";")[0];
+  return SUPPORTED_LOGO_MIME_TYPES.has(contentType);
+}
+
+async function getSafeLogoBlob(entry, signal) {
+  const candidates = buildVideoLogoUrlCandidates(entry);
   if (!candidates.length) {
     throw new Error("No LinkedIn logo was found for " + (entry.organization || entry.title) + ".");
   }
@@ -274,7 +344,10 @@ async function getSafeLogoBlob(entry, signal) {
     if (url.startsWith("data:") || url.startsWith("blob:")) {
       try {
         const response = await fetch(url, { signal });
-        if (response.ok) return await response.blob();
+        if (response.ok) {
+          const blob = await response.blob();
+          if (isSupportedLogoBlob(blob)) return blob;
+        }
       } catch (error) {
         if (error?.name === "AbortError") throw error;
       }
@@ -291,7 +364,10 @@ async function getSafeLogoBlob(entry, signal) {
       throwIfAborted(signal);
       if (response?.type === "LINKEDME_IMAGE_FETCH_SUCCESS" && response.payload?.dataUrl) {
         const dataResponse = await fetch(response.payload.dataUrl, { signal });
-        if (dataResponse.ok) return await dataResponse.blob();
+        if (dataResponse.ok) {
+          const blob = await dataResponse.blob();
+          if (isSupportedLogoBlob(blob)) return blob;
+        }
       }
     } catch (error) {
       if (error?.name === "AbortError") throw error;
@@ -309,7 +385,7 @@ async function loadLogoImages(selectedEntries, signal) {
     for (const entry of selectedEntries) {
       const blob = await getSafeLogoBlob(entry, signal);
       const contentType = (blob.type || "").toLowerCase().split(";")[0];
-      if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+      if (!SUPPORTED_LOGO_MIME_TYPES.has(contentType)) {
         throw new Error("The logo for " + (entry.organization || entry.title) +
           " is not a PNG, JPEG, or WebP image.");
       }
@@ -459,107 +535,470 @@ function drawTrackedLogos(context, logos, tracking, trackingIndex, signOrder, fr
   });
 }
 
-export async function createGifWorkerClient(signal) {
-  const workerModuleUrl = chrome.runtime.getURL("content/gifEncoder.worker.js");
-  const bootstrapUrl = URL.createObjectURL(new Blob(
-    [`import ${JSON.stringify(workerModuleUrl)};`],
-    { type: "text/javascript" }
-  ));
-  let bootstrapUrlActive = true;
-  const releaseBootstrapUrl = () => {
-    if (!bootstrapUrlActive) return;
-    bootstrapUrlActive = false;
-    URL.revokeObjectURL(bootstrapUrl);
-  };
-  let worker;
-  try {
-    // A content script has the host page's origin for Worker URL checks. Starting
-    // with a same-origin blob avoids loading the chrome-extension:// URL as the
-    // worker entry point; the module import is allowed by web_accessible_resources.
-    worker = new Worker(bootstrapUrl, { type: "module" });
-  } catch (error) {
-    releaseBootstrapUrl();
-    throw error;
+export function selectMp4RecorderMimeType(Recorder = globalThis.MediaRecorder) {
+  if (!Recorder || typeof Recorder.isTypeSupported !== "function") {
+    throw new Error("This version of Chrome cannot create MP4 videos.");
   }
-  const pending = new Map();
-  let nextId = 1;
-  let terminated = false;
+  const mimeType = MP4_MIME_TYPE_CANDIDATES.find((candidate) =>
+    Recorder.isTypeSupported(candidate)
+  );
+  if (!mimeType) {
+    throw new Error("Chrome does not provide an H.264 MP4 encoder on this device.");
+  }
+  return mimeType;
+}
 
-  const rejectPending = (error) => {
-    pending.forEach(({ reject }) => reject(error));
-    pending.clear();
+function baseVideoEncoderConfig(codec) {
+  return {
+    codec,
+    width: OUTPUT_WIDTH,
+    height: OUTPUT_HEIGHT,
+    framerate: OUTPUT_FPS,
+    hardwareAcceleration: "no-preference",
+    latencyMode: "quality",
+    avc: { format: "avc" },
   };
-  const terminate = (error = createAbortError()) => {
-    if (terminated) return;
-    terminated = true;
-    releaseBootstrapUrl();
-    signal?.removeEventListener("abort", onAbort);
-    worker.terminate();
-    rejectPending(error);
-  };
-  const onAbort = () => terminate(createAbortError());
-  signal?.addEventListener("abort", onAbort, { once: true });
+}
 
-  worker.addEventListener("message", (event) => {
-    const message = event.data || {};
-    const deferred = pending.get(message.id);
-    if (!deferred) return;
-    pending.delete(message.id);
-    if (message.type === "error") deferred.reject(new Error(message.message || "GIF encoding failed."));
-    else deferred.resolve(message);
-  });
-  worker.addEventListener("error", (event) => {
-    terminate(new Error(event.message || "The GIF encoder worker failed."));
-  });
-
-  const send = (type, payload = {}, transfer = []) => {
-    throwIfAborted(signal);
-    if (terminated) return Promise.reject(new Error("The GIF encoder is no longer available."));
-    const id = nextId++;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      worker.postMessage({ id, type, ...payload }, transfer);
-    });
-  };
-
+async function supportedVideoEncoderConfig(Encoder, config) {
   try {
-    await send("init", {
+    const result = await Encoder.isConfigSupported(config);
+    return result?.supported ? result.config || config : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+export async function selectH264EncoderConfig(
+  Encoder = globalThis.VideoEncoder,
+  profile = VIDEO_EXPORT_PROFILE
+) {
+  if (!Encoder || typeof Encoder.isConfigSupported !== "function") {
+    throw new Error("This version of Chrome does not provide the WebCodecs video encoder.");
+  }
+
+  for (const codec of H264_CODEC_CANDIDATES) {
+    const config = await supportedVideoEncoderConfig(Encoder, {
+      ...baseVideoEncoderConfig(codec),
+      bitrateMode: "quantizer",
+    });
+    if (config?.bitrateMode === "quantizer") {
+      return { config, codec, constantQuality: true, quantizer: profile.quantizer };
+    }
+  }
+
+  for (const bitrateMode of ["constant", "variable"]) {
+    for (const codec of H264_CODEC_CANDIDATES) {
+      const config = await supportedVideoEncoderConfig(Encoder, {
+        ...baseVideoEncoderConfig(codec),
+        bitrate: profile.bitrate,
+        bitrateMode,
+      });
+      if (config && (config.bitrateMode === bitrateMode || bitrateMode === "variable")) {
+        return { config, codec, constantQuality: false, quantizer: null };
+      }
+    }
+  }
+
+  throw new Error("Chrome does not provide a compatible H.264 WebCodecs encoder.");
+}
+
+export async function assertMp4Blob(blob) {
+  if (!(blob instanceof Blob) || blob.size < 12 || !/^video\/mp4(?:;|$)/i.test(blob.type)) {
+    throw new Error("The video encoder returned an empty or invalid MP4 file.");
+  }
+  const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const boxType = String.fromCharCode(...header.subarray(4, 8));
+  if (boxType !== "ftyp") {
+    throw new Error("The video encoder returned an MP4 file without an ftyp header.");
+  }
+}
+
+export function measuredVideoBitrate(blob, durationSeconds = OUTPUT_FRAME_COUNT / OUTPUT_FPS) {
+  return Math.round(blob.size * 8 / durationSeconds);
+}
+
+function cleanupVideoGenerationResources(session) {
+  if (!session || session.cleaned) return;
+  session.cleaned = true;
+  if (session.encoder?.state && session.encoder.state !== "closed") {
+    try { session.encoder.close(); } catch (_error) { /* Already closed. */ }
+  }
+  if (session.videoFrameCallback !== null && session.video?.cancelVideoFrameCallback) {
+    session.video.cancelVideoFrameCallback(session.videoFrameCallback);
+  }
+  if (session.recorder?.state && session.recorder.state !== "inactive") {
+    try { session.recorder.stop(); } catch (_error) { /* Already stopping. */ }
+  }
+  session.stream?.getTracks().forEach((track) => track.stop());
+  if (session.video) {
+    session.video.pause();
+    session.video.removeAttribute("src");
+    session.video.load();
+  }
+  if (session.videoUrl) URL.revokeObjectURL(session.videoUrl);
+  session.logos?.forEach((logo) => logo.close());
+  if (session.canvas) {
+    session.canvas.width = 0;
+    session.canvas.height = 0;
+  }
+}
+
+function frameIndexFromMediaTime(mediaTime) {
+  return Math.max(0, Math.min(
+    OUTPUT_FRAME_COUNT - 1,
+    Math.round(mediaTime * OUTPUT_FPS)
+  ));
+}
+
+async function waitForEncoderCapacity(encoder, signal) {
+  while (encoder.encodeQueueSize >= ENCODER_QUEUE_LIMIT) {
+    throwIfAborted(signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+export function videoEncodeOptions(frameIndex, selection, profile = VIDEO_EXPORT_PROFILE) {
+  const options = {
+    keyFrame: frameIndex === 0 || frameIndex % profile.keyFrameInterval === 0,
+  };
+  if (selection.constantQuality) {
+    options.avc = { quantizer: selection.quantizer };
+  }
+  return options;
+}
+
+async function encodeCanvasWithWebCodecs({
+  session,
+  context,
+  tracking,
+  trackingIndex,
+  template,
+  profile,
+  signal,
+  onProgress,
+  selection,
+  Encoder = globalThis.VideoEncoder,
+  Frame = globalThis.VideoFrame,
+}) {
+  if (typeof Frame !== "function") {
+    throw new Error("This version of Chrome does not provide WebCodecs video frames.");
+  }
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    video: {
+      codec: "avc",
       width: OUTPUT_WIDTH,
       height: OUTPUT_HEIGHT,
-      frameCount: OUTPUT_FRAME_COUNT,
-      maxColors: 256,
+      frameRate: OUTPUT_FPS,
+    },
+    fastStart: "in-memory",
+  });
+  let encoderFailure = null;
+  session.encoder = new Encoder({
+    output(chunk, metadata) {
+      if (encoderFailure) return;
+      try {
+        muxer.addVideoChunk(chunk, metadata);
+      } catch (error) {
+        encoderFailure = error;
+      }
+    },
+    error(error) {
+      encoderFailure = error;
+    },
+  });
+  session.encoder.configure(selection.config);
+
+  const nominalFrameDuration = 1_000_000 / OUTPUT_FPS;
+  for (let frameIndex = 0; frameIndex < OUTPUT_FRAME_COUNT; frameIndex += 1) {
+    throwIfAborted(signal);
+    if (encoderFailure) throw encoderFailure;
+    await seekVideoToFrame(session.video, frameIndex, signal);
+    context.drawImage(
+      session.video, 0, 0, session.canvas.width, session.canvas.height
+    );
+    drawTrackedLogos(
+      context,
+      session.logos,
+      tracking,
+      trackingIndex,
+      template.signOrder,
+      frameIndex
+    );
+
+    await waitForEncoderCapacity(session.encoder, signal);
+    if (encoderFailure) throw encoderFailure;
+    const timestamp = Math.round(frameIndex * nominalFrameDuration);
+    const nextTimestamp = Math.round((frameIndex + 1) * nominalFrameDuration);
+    const frame = new Frame(session.canvas, {
+      timestamp,
+      duration: nextTimestamp - timestamp,
     });
-    releaseBootstrapUrl();
-  } catch (error) {
-    terminate(error);
-    throw error;
+    try {
+      session.encoder.encode(frame, videoEncodeOptions(frameIndex, selection, profile));
+    } finally {
+      frame.close();
+    }
+    onProgress?.(
+      "Rendering frame " + (frameIndex + 1) + " of " + OUTPUT_FRAME_COUNT + "…",
+      10 + ((frameIndex + 1) / OUTPUT_FRAME_COUNT) * 85
+    );
   }
+
+  onProgress?.("Finalizing MP4…", 97);
+  await session.encoder.flush();
+  if (encoderFailure) throw encoderFailure;
+  muxer.finalize();
+  const blob = new Blob([target.buffer], { type: "video/mp4" });
   return {
-    async encodeFrame(frameIndex, rgba, delay) {
-      await send("frame", { frameIndex, rgba: rgba.buffer, delay }, [rgba.buffer]);
-    },
-    async finish() {
-      const message = await send("finish");
-      return message.bytes;
-    },
-    terminate,
+    blob,
+    actualBitrate: measuredVideoBitrate(blob),
+    codec: selection.codec,
+    constantQuality: selection.constantQuality,
+    quantizer: selection.quantizer,
   };
 }
 
-function assertGifBytes(buffer) {
-  const bytes = new Uint8Array(buffer);
-  if (bytes.byteLength < 7) throw new Error("The GIF encoder returned an empty file.");
-  const signature = String.fromCharCode(...bytes.subarray(0, 6));
-  if (signature !== "GIF87a" && signature !== "GIF89a") {
-    throw new Error("The GIF encoder returned an invalid file.");
+async function recordCanvasWithMediaRecorder({
+  session,
+  context,
+  tracking,
+  trackingIndex,
+  template,
+  profile,
+  signal,
+  onProgress,
+}) {
+  const Recorder = globalThis.MediaRecorder;
+  const mimeType = selectMp4RecorderMimeType(Recorder);
+  if (typeof session.canvas.captureStream !== "function") {
+    throw new Error("Chrome cannot capture the video rendering canvas.");
+  }
+  if (typeof session.video.requestVideoFrameCallback !== "function") {
+    throw new Error("This version of Chrome cannot synchronize video frames.");
+  }
+
+  session.stream = session.canvas.captureStream(OUTPUT_FPS);
+  session.recorder = new Recorder(session.stream, {
+    mimeType,
+    videoBitsPerSecond: profile.bitrate,
+  });
+  const chunks = [];
+  let lastRenderedFrame = -1;
+
+  const recording = new Promise((resolve, reject) => {
+    let settled = false;
+    let stopTimer;
+
+    const removeListeners = () => {
+      clearTimeout(stopTimer);
+      signal?.removeEventListener("abort", onAbort);
+      session.video.removeEventListener("ended", onEnded);
+      session.recorder.removeEventListener("dataavailable", onDataAvailable);
+      session.recorder.removeEventListener("error", onRecorderError);
+      session.recorder.removeEventListener("stop", onStop);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      removeListeners();
+      session.video.pause();
+      if (session.recorder.state !== "inactive") {
+        try { session.recorder.stop(); } catch (_error) { /* Already stopping. */ }
+      }
+      reject(error);
+    };
+    const renderFrame = (frameIndex) => {
+      if (frameIndex === lastRenderedFrame) return;
+      lastRenderedFrame = frameIndex;
+      context.drawImage(
+        session.video, 0, 0, session.canvas.width, session.canvas.height
+      );
+      drawTrackedLogos(
+        context,
+        session.logos,
+        tracking,
+        trackingIndex,
+        template.signOrder,
+        frameIndex
+      );
+      onProgress?.(
+        "Rendering frame " + (frameIndex + 1) + " of " + OUTPUT_FRAME_COUNT + "…",
+        10 + (frameIndex / OUTPUT_FRAME_COUNT) * 85
+      );
+    };
+    const requestNextFrame = () => {
+      session.videoFrameCallback = session.video.requestVideoFrameCallback(
+        (_now, metadata) => {
+          if (settled) return;
+          try {
+            renderFrame(frameIndexFromMediaTime(metadata.mediaTime));
+            requestNextFrame();
+          } catch (error) {
+            fail(error);
+          }
+        }
+      );
+    };
+    const onDataAvailable = (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    };
+    const onRecorderError = (event) => {
+      fail(event.error || new Error("Chrome failed while encoding the MP4 video."));
+    };
+    const onStop = () => {
+      if (settled) return;
+      settled = true;
+      removeListeners();
+      const outputType = session.recorder.mimeType || mimeType;
+      const blob = new Blob(chunks, { type: outputType });
+      resolve({
+        blob,
+        actualBitrate: measuredVideoBitrate(blob),
+        codec: mimeType,
+        constantQuality: false,
+        quantizer: null,
+      });
+    };
+    const onEnded = () => {
+      try {
+        renderFrame(OUTPUT_FRAME_COUNT - 1);
+        onProgress?.("Finalizing MP4…", 97);
+        stopTimer = setTimeout(() => {
+          if (session.recorder.state !== "inactive") session.recorder.stop();
+        }, VIDEO_STOP_FLUSH_MS);
+      } catch (error) {
+        fail(error);
+      }
+    };
+    const onAbort = () => fail(createAbortError());
+
+    session.recorder.addEventListener("dataavailable", onDataAvailable);
+    session.recorder.addEventListener("error", onRecorderError, { once: true });
+    session.recorder.addEventListener("stop", onStop, { once: true });
+    session.video.addEventListener("ended", onEnded, { once: true });
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      session.recorder.start(1000);
+      requestNextFrame();
+      const playResult = session.video.play();
+      if (playResult?.catch) playResult.catch(fail);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  return recording;
+}
+
+async function recordCanvasAsMp4(options) {
+  const Encoder = globalThis.VideoEncoder;
+  const Frame = globalThis.VideoFrame;
+  if (Encoder && Frame) {
+    try {
+      const selection = await selectH264EncoderConfig(Encoder, options.profile);
+      return await encodeCanvasWithWebCodecs({
+        ...options,
+        selection,
+        Encoder,
+        Frame,
+      });
+    } catch (error) {
+      if (!/WebCodecs.*encoder|compatible H\.264/i.test(error?.message || "")) {
+        throw error;
+      }
+    }
+  }
+
+  options.onProgress?.("Using the compatible H.264 MP4 encoder…", 9);
+  return recordCanvasWithMediaRecorder(options);
+}
+
+async function generateMp4Video({
+  template,
+  selectedEntries,
+  profile,
+  signal,
+  onProgress,
+}) {
+  const session = {
+    cleaned: false,
+    logos: [],
+    video: null,
+    videoUrl: null,
+    canvas: null,
+    encoder: null,
+    stream: null,
+    recorder: null,
+    videoFrameCallback: null,
+  };
+
+  try {
+    throwIfAborted(signal);
+    onProgress?.("Loading tracking data…", 0);
+    const tracking = await loadTrackingData(template, signal);
+    onProgress?.("Loading LinkedIn logos…", 3);
+    session.logos = await loadLogoImages(selectedEntries, signal);
+    onProgress?.("Loading video template…", 6);
+    const videoResource = await loadVideo(template, signal);
+    session.video = videoResource.video;
+    session.videoUrl = videoResource.videoUrl;
+    const trackingIndex = buildTrackingIndex(tracking);
+
+    session.canvas = document.createElement("canvas");
+    session.canvas.width = tracking.video.width;
+    session.canvas.height = tracking.video.height;
+    const context = session.canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("Chrome could not create the video rendering canvas.");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+
+    context.drawImage(
+      session.video, 0, 0, session.canvas.width, session.canvas.height
+    );
+    drawTrackedLogos(
+      context,
+      session.logos,
+      tracking,
+      trackingIndex,
+      template.signOrder,
+      0
+    );
+    onProgress?.("Starting H.264 MP4 encoder…", 9);
+
+    const result = await recordCanvasAsMp4({
+      session,
+      context,
+      tracking,
+      trackingIndex,
+      template,
+      profile,
+      signal,
+      onProgress,
+    });
+    await assertMp4Blob(result.blob);
+    throwIfAborted(signal);
+    onProgress?.("Video ready.", 100);
+    return result;
+  } finally {
+    cleanupVideoGenerationResources(session);
   }
 }
 
-function generatedFilename(template) {
-  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-  return "linkedme-" + template.name + "-" + timestamp + ".gif";
+export function generateVideo(options) {
+  return generateMp4Video({ ...options, profile: VIDEO_EXPORT_PROFILE });
 }
-function createFloatingPanelController(options) {
+
+function generatedFilename(template, profile) {
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+  return "linkedme-" + template.name + "-" + profile.filenameSuffix + "-" + timestamp + ".mp4";
+}
+
+function createFloatingPanelController(options = {}) {
   let entries = [];
   let mode = "three";
   let draggedId = null;
@@ -568,18 +1007,23 @@ function createFloatingPanelController(options) {
   let list;
   let modeToggle;
   let modeText;
-  let generateButton;
-  let loadingSection;
-  let loadingProgress;
-  let loadingProgressText;
-  let resultSection;
-  let resultImage;
-  let downloadLink;
-  let isGenerating = false;
-  let activeGeneration = null;
-  let generatedGifUrl = null;
+  const pipelineState = {
+    profile: VIDEO_EXPORT_PROFILE,
+    generate: options.generateVideo || generateVideo,
+    controller: null,
+    generatedUrl: null,
+    generatedFilename: null,
+    generateButton: null,
+    progress: null,
+    progressBar: null,
+    progressPercentage: null,
+    preview: null,
+    downloadButton: null,
+    isGenerating: false,
+  };
 
   function limit() { return LIMITS[mode]; }
+  function isGenerating() { return pipelineState.isGenerating; }
   function formatExtractedDate(value) {
     const match = /^(\d{4})[/-](\d{1,2})$/.exec(value || "");
     if (!match) return value;
@@ -601,73 +1045,89 @@ function createFloatingPanelController(options) {
     return (entry.startDate || "Unknown") + " – " + (entry.endDate || "Present");
   }
 
-  function updateGenerateControls() {
-    if (generateButton) generateButton.disabled = isGenerating || entries.length < limit();
-    if (modeToggle) modeToggle.disabled = isGenerating;
-  }
-
-  function showLoadingState(text = "Loading assets…", progress = 0) {
-    if (!loadingSection) return;
-    loadingSection.hidden = false;
-    loadingProgressText.textContent = text;
-    loadingProgress.value = progress;
-  }
-
-  function updateProgress(text, progress) {
-    if (!loadingSection) return;
-    loadingProgressText.textContent = text;
-    loadingProgress.value = Math.max(0, Math.min(100, progress));
-  }
-
-  function hideLoadingState() {
-    if (loadingSection) loadingSection.hidden = true;
-  }
-
-  function cleanupGenerationResources(session) {
-    if (!session || session.cleaned) return;
-    session.cleaned = true;
-    session.workerClient?.terminate();
-    if (session.video) {
-      session.video.pause();
-      session.video.removeAttribute("src");
-      session.video.load();
+  function updateExportControls() {
+    const selectionIncomplete = entries.length < limit();
+    const generationRunning = isGenerating();
+    if (pipelineState.generateButton) {
+      pipelineState.generateButton.disabled = generationRunning || selectionIncomplete;
     }
-    if (session.videoUrl) URL.revokeObjectURL(session.videoUrl);
-    session.logos?.forEach((logo) => logo.close());
-    if (session.canvas) {
-      session.canvas.width = 0;
-      session.canvas.height = 0;
+    if (modeToggle) modeToggle.disabled = generationRunning;
+    list?.querySelectorAll(".experience-item").forEach((item) => {
+      item.draggable = !generationRunning;
+    });
+  }
+
+  function abortPipeline() {
+    const controller = pipelineState.controller;
+    if (!controller) return;
+    pipelineState.controller = null;
+    pipelineState.isGenerating = false;
+    controller.abort();
+    if (pipelineState.generateButton) {
+      pipelineState.generateButton.textContent = pipelineState.profile.buttonLabel;
+    }
+    if (pipelineState.progress) pipelineState.progress.hidden = true;
+    updateExportControls();
+  }
+
+  function updateGenerationProgress(_stage, progress) {
+    if (!pipelineState.progress) return;
+    const percentage = Math.round(Math.max(0, Math.min(100, Number(progress) || 0)));
+    pipelineState.progress.hidden = false;
+    pipelineState.progressBar.value = percentage;
+    pipelineState.progressPercentage.textContent = percentage + "%";
+  }
+
+  function clearPipelineResult() {
+    if (pipelineState.generatedUrl) URL.revokeObjectURL(pipelineState.generatedUrl);
+    pipelineState.generatedUrl = null;
+    pipelineState.generatedFilename = null;
+    if (pipelineState.preview) {
+      if (pipelineState.preview.hasAttribute("src")) {
+        pipelineState.preview.pause();
+        pipelineState.preview.removeAttribute("src");
+        pipelineState.preview.load();
+      }
+      pipelineState.preview.hidden = true;
+    }
+    if (pipelineState.downloadButton) pipelineState.downloadButton.hidden = true;
+    if (pipelineState.progress) {
+      pipelineState.progress.hidden = true;
+      pipelineState.progressBar.value = 0;
+      pipelineState.progressPercentage.textContent = "0%";
     }
   }
 
-  function abortActiveGeneration() {
-    const session = activeGeneration;
-    if (!session) return;
-    activeGeneration = null;
-    isGenerating = false;
-    session.controller.abort();
-    cleanupGenerationResources(session);
-    hideLoadingState();
-    updateGenerateControls();
+  function triggerDownload(url, filename) {
+    if (typeof options.triggerDownload === "function") {
+      options.triggerDownload(url, filename);
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
   }
 
-  function clearGeneratedResult() {
-    if (generatedGifUrl) URL.revokeObjectURL(generatedGifUrl);
-    generatedGifUrl = null;
-    if (resultImage) resultImage.removeAttribute("src");
-    if (downloadLink) downloadLink.removeAttribute("href");
-    if (resultSection) resultSection.hidden = true;
-  }
-
-  function displayGeneratedGif(blob, filename) {
+  function displayGeneratedVideo(blob, filename) {
     const nextUrl = URL.createObjectURL(blob);
-    const previousUrl = generatedGifUrl;
-    generatedGifUrl = nextUrl;
-    resultImage.src = nextUrl;
-    downloadLink.href = nextUrl;
-    downloadLink.download = filename;
-    resultSection.hidden = false;
+    const previousUrl = pipelineState.generatedUrl;
+    pipelineState.generatedUrl = nextUrl;
+    pipelineState.generatedFilename = filename;
+    pipelineState.preview.src = nextUrl;
+    pipelineState.preview.hidden = false;
+    pipelineState.downloadButton.hidden = false;
+    const playResult = pipelineState.preview.play();
+    if (playResult?.catch) playResult.catch(() => {});
     if (previousUrl) URL.revokeObjectURL(previousUrl);
+  }
+
+  function handleDownload() {
+    if (!pipelineState.generatedUrl || !pipelineState.generatedFilename) return;
+    triggerDownload(pipelineState.generatedUrl, pipelineState.generatedFilename);
   }
 
   function render() {
@@ -677,7 +1137,7 @@ function createFloatingPanelController(options) {
       const item = document.createElement("li");
       item.className = "experience-item " +
         (index < limit() ? "is-selected-for-video" : "is-outside-video");
-      item.draggable = !isGenerating;
+      item.draggable = !isGenerating();
       item.dataset.experienceId = entry.id;
 
       const content = document.createElement("div");
@@ -710,7 +1170,7 @@ function createFloatingPanelController(options) {
         list.append(divider);
       }
     });
-    updateGenerateControls();
+    updateExportControls();
   }
 
   function ensurePanel() {
@@ -815,54 +1275,76 @@ function createFloatingPanelController(options) {
     list.className = "experience-list";
     list.setAttribute("aria-live", "polite");
 
-    generateButton = document.createElement("button");
-    generateButton.type = "button";
-    generateButton.id = "linkedme-generate-video";
-    generateButton.textContent = "Generate";
+    pipelineState.generateButton = document.createElement("button");
+    pipelineState.generateButton.type = "button";
+    pipelineState.generateButton.className = "generate-video";
+    pipelineState.generateButton.textContent = pipelineState.profile.buttonLabel;
 
-    loadingSection = document.createElement("section");
-    loadingSection.className = "generation-loading";
-    loadingSection.hidden = true;
-    loadingSection.setAttribute("role", "status");
-    loadingSection.setAttribute("aria-live", "polite");
-    const spinner = document.createElement("div");
-    spinner.className = "generation-spinner";
-    spinner.setAttribute("aria-hidden", "true");
-    const loadingCopy = document.createElement("div");
-    loadingCopy.className = "generation-loading-copy";
-    const loadingTitle = document.createElement("div");
-    loadingTitle.className = "generation-loading-title";
-    loadingTitle.textContent = "Creating your GIF…";
-    loadingProgressText = document.createElement("p");
-    loadingProgressText.className = "generation-progress-text";
-    loadingProgressText.textContent = "Loading assets…";
-    loadingProgress = document.createElement("progress");
-    loadingProgress.className = "generation-progress";
-    loadingProgress.max = 100;
-    loadingProgress.value = 0;
-    loadingCopy.append(loadingTitle, loadingProgressText, loadingProgress);
-    loadingSection.append(spinner, loadingCopy);
+    pipelineState.progress = document.createElement("div");
+    pipelineState.progress.className = "video-generation-progress";
+    pipelineState.progress.hidden = true;
+    pipelineState.progress.setAttribute("role", "status");
+    pipelineState.progress.setAttribute("aria-live", "polite");
+    const progressCopy = document.createElement("div");
+    progressCopy.className = "video-generation-progress-copy";
+    pipelineState.progressPercentage = document.createElement("output");
+    pipelineState.progressPercentage.className = "video-generation-percentage";
+    pipelineState.progressPercentage.textContent = "0%";
+    pipelineState.progressBar = document.createElement("progress");
+    pipelineState.progressBar.className = "video-generation-bar";
+    pipelineState.progressBar.max = 100;
+    pipelineState.progressBar.value = 0;
+    progressCopy.append(pipelineState.progressPercentage);
+    pipelineState.progress.append(progressCopy, pipelineState.progressBar);
 
-    resultSection = document.createElement("section");
-    resultSection.className = "generation-result";
-    resultSection.hidden = true;
-    resultImage = document.createElement("img");
-    resultImage.className = "generated-gif";
-    resultImage.alt = "Generated LinkedMe animation with company logos";
-    downloadLink = document.createElement("a");
-    downloadLink.className = "download-gif";
-    downloadLink.textContent = "Download GIF";
-    resultSection.append(resultImage, downloadLink);
+    pipelineState.preview = document.createElement("video");
+    pipelineState.preview.className = "generated-video";
+    pipelineState.preview.hidden = true;
+    pipelineState.preview.controls = true;
+    pipelineState.preview.autoplay = true;
+    pipelineState.preview.loop = true;
+    pipelineState.preview.muted = true;
+    pipelineState.preview.playsInline = true;
+    pipelineState.preview.setAttribute("aria-label", "Generated video preview");
 
-    body.append(actions, status, sectionHeader, list, generateButton,
-      loadingSection, resultSection);
+    pipelineState.downloadButton = document.createElement("button");
+    pipelineState.downloadButton.type = "button";
+    pipelineState.downloadButton.className = "download-video";
+    const downloadIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    downloadIcon.classList.add("download-video-icon");
+    downloadIcon.setAttribute("viewBox", "0 0 24 24");
+    downloadIcon.setAttribute("aria-hidden", "true");
+    const downloadIconPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    downloadIconPath.setAttribute(
+      "d",
+      "M12 3v12m0 0 5-5m-5 5-5-5M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3"
+    );
+    downloadIcon.append(downloadIconPath);
+    const downloadLabel = document.createElement("span");
+    downloadLabel.textContent = "Download";
+    pipelineState.downloadButton.append(downloadIcon, downloadLabel);
+    pipelineState.downloadButton.hidden = true;
+
+    pipelineState.generateButton.addEventListener("click", handleGenerateVideo);
+    pipelineState.downloadButton.addEventListener("click", handleDownload);
+
+    body.append(
+      actions,
+      status,
+      sectionHeader,
+      list,
+      pipelineState.generateButton,
+      pipelineState.progress,
+      pipelineState.preview,
+      pipelineState.downloadButton
+    );
     panel.append(header, body);
     document.body.append(panel);
     makeDraggable(panel, header);
 
     close.addEventListener("click", () => {
-      abortActiveGeneration();
-      clearGeneratedResult();
+      abortPipeline();
+      clearPipelineResult();
       panel.remove();
     });
 
@@ -909,15 +1391,14 @@ function createFloatingPanelController(options) {
       }
     });
     modeToggle.addEventListener("change", () => {
-      if (isGenerating) return;
+      if (isGenerating()) return;
       mode = modeToggle.checked ? "one" : "three";
       modeText.textContent = mode === "one" ? "1-sign mode" : "3-signs mode";
-      clearGeneratedResult();
+      clearPipelineResult();
       render();
     });
-    generateButton.addEventListener("click", handleGenerate);
     list.addEventListener("dragstart", (event) => {
-      if (isGenerating) {
+      if (isGenerating()) {
         event.preventDefault();
         return;
       }
@@ -936,7 +1417,7 @@ function createFloatingPanelController(options) {
     list.addEventListener("dragleave", (event) =>
       event.target.closest(".experience-item")?.classList.remove("is-drop-target"));
     list.addEventListener("drop", (event) => {
-      if (isGenerating) return;
+      if (isGenerating()) return;
       const target = event.target.closest(".experience-item");
       if (!target) return;
       event.preventDefault();
@@ -952,90 +1433,57 @@ function createFloatingPanelController(options) {
         item.classList.remove("is-dragging", "is-drop-target"));
     });
     window.addEventListener("pagehide", () => {
-      abortActiveGeneration();
-      clearGeneratedResult();
+      abortPipeline();
+      clearPipelineResult();
     }, { once: true });
   }
 
-  async function handleGenerate() {
-    if (isGenerating) return;
+  async function handleGenerateVideo() {
+    if (pipelineState.isGenerating) return;
     const template = selectTemplate(mode);
     const selectedEntries = entries.slice(0, template.logoCount);
     if (selectedEntries.length !== template.logoCount) {
-      setStatus("Select " + template.logoCount + " experience" +
-        (template.logoCount === 1 ? "" : "s") + " before creating.", true);
+      status.textContent = "Select " + template.logoCount + " profile item" +
+        (template.logoCount === 1 ? "" : "s") + " before creating.";
+      status.classList.add("is-error");
       return;
     }
 
-    const session = {
-      controller: new AbortController(),
-      cleaned: false,
-      logos: [],
-      video: null,
-      videoUrl: null,
-      canvas: null,
-      workerClient: null,
-    };
-    activeGeneration = session;
-    isGenerating = true;
-    setStatus("Creating your GIF…");
-    showLoadingState("Loading assets…", 0);
-    updateGenerateControls();
+    const controller = new AbortController();
+    pipelineState.controller = controller;
+    pipelineState.isGenerating = true;
+    clearPipelineResult();
+    pipelineState.generateButton.textContent = "Creating video…";
+    updateGenerationProgress("Preparing video…", 0);
+    updateExportControls();
 
     try {
-      const tracking = await loadTrackingData(template, session.controller.signal);
-      updateProgress("Loading LinkedIn logos…", 3);
-      session.logos = await loadLogoImages(selectedEntries, session.controller.signal);
-      updateProgress("Loading video template…", 6);
-      const videoResource = await loadVideo(template, session.controller.signal);
-      session.video = videoResource.video;
-      session.videoUrl = videoResource.videoUrl;
-      const trackingIndex = buildTrackingIndex(tracking);
-
-      const canvas = document.createElement("canvas");
-      canvas.width = tracking.video.width;
-      canvas.height = tracking.video.height;
-      session.canvas = canvas;
-      const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
-      if (!context) throw new Error("Chrome could not create the GIF rendering canvas.");
-
-      updateProgress("Starting GIF encoder…", 9);
-      session.workerClient = await createGifWorkerClient(session.controller.signal);
-
-      for (let frameIndex = 0; frameIndex < OUTPUT_FRAME_COUNT; frameIndex += 1) {
-        throwIfAborted(session.controller.signal);
-        updateProgress("Rendering frame " + (frameIndex + 1) + " of " +
-          OUTPUT_FRAME_COUNT + "…", 10 + (frameIndex / OUTPUT_FRAME_COUNT) * 85);
-        await seekVideoToFrame(session.video, frameIndex, session.controller.signal);
-        context.drawImage(session.video, 0, 0, canvas.width, canvas.height);
-        drawTrackedLogos(context, session.logos, tracking, trackingIndex,
-          template.signOrder, frameIndex);
-        const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
-        await session.workerClient.encodeFrame(frameIndex, rgba, gifFrameDelay(frameIndex));
-      }
-
-      updateProgress("Finalizing GIF…", 97);
-      const gifBuffer = await session.workerClient.finish();
-      assertGifBytes(gifBuffer);
-      throwIfAborted(session.controller.signal);
-      if (activeGeneration !== session) return;
-
-      const gifBlob = new Blob([gifBuffer], { type: "image/gif" });
-      displayGeneratedGif(gifBlob, generatedFilename(template));
-      updateProgress("Your GIF is ready.", 100);
-      setStatus("Your GIF is ready.");
+      const result = await pipelineState.generate({
+        template,
+        selectedEntries,
+        signal: controller.signal,
+        onProgress: updateGenerationProgress,
+      });
+      if (pipelineState.controller !== controller) return;
+      const blob = result?.blob || result;
+      updateGenerationProgress("Video ready.", 100);
+      displayGeneratedVideo(
+        blob,
+        generatedFilename(template, pipelineState.profile)
+      );
     } catch (error) {
-      if (error?.name !== "AbortError" && activeGeneration === session) {
-        setStatus("Could not create GIF: " +
-          (error instanceof Error ? error.message : "Unexpected generation failure."), true);
+      if (error?.name !== "AbortError" && pipelineState.controller === controller) {
+        pipelineState.progress.hidden = true;
+        status.textContent = "Could not create video: " +
+          (error instanceof Error ? error.message : "Unexpected generation failure.");
+        status.classList.add("is-error");
       }
     } finally {
-      cleanupGenerationResources(session);
-      if (activeGeneration === session) {
-        activeGeneration = null;
-        isGenerating = false;
-        hideLoadingState();
-        updateGenerateControls();
+      if (pipelineState.controller === controller) {
+        pipelineState.controller = null;
+        pipelineState.isGenerating = false;
+        pipelineState.generateButton.textContent = pipelineState.profile.buttonLabel;
+        updateExportControls();
       }
     }
   }
@@ -1043,8 +1491,8 @@ function createFloatingPanelController(options) {
   function showProfile(profile, message) {
     ensurePanel();
     if (!panel.isConnected) document.body.append(panel);
-    abortActiveGeneration();
-    clearGeneratedResult();
+    abortPipeline();
+    clearPipelineResult();
     entries = normalizeEntries(profile);
     render();
     setStatus(message || "Extraction completed.");

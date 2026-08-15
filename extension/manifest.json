@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LinkedMe",
   "version": "1.0.0",
-  "description": "Extract education, experience, and volunteering data from LinkedIn profiles.",
+  "description": "Turn LinkedIn education, work, and volunteering entries into an MP4 video generated locally.",
   "icons": {
     "16": "assets/lme_logo_16x16.png",
     "48": "assets/lme_logo_48x48.png",
@@ -52,6 +52,7 @@
         "assets/3_signs_video_12_frames_final.mp4",
         "assets/1_sign_track_raw_12_frames.json",
         "assets/3_sign_tracks_corrected_12_frames.json",
+        "vendor/mp4-muxer/mp4-muxer.mjs",
         "vendor/gifenc/gifenc.esm.js"
       ],
       "matches": ["https://www.linkedin.com/*"]

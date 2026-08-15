@@ -28,12 +28,43 @@ const imageResponseCache = new Map();
 const MAX_IMAGE_RESPONSE_CACHE_SIZE = 50;
 const ALLOWED_IMAGE_HOSTS = new Set(["media.licdn.com", "static.licdn.com"]);
 const STATUS_STORAGE_KEY = "linkedme.latestStatus.v1";
+
+function removeStoredProfileUrl(profile) {
+  if (!profile || typeof profile !== "object" || !("profileUrl" in profile)) {
+    return profile;
+  }
+
+  const { profileUrl: _removedProfileUrl, ...profileWithoutUrl } = profile;
+  return profileWithoutUrl;
+}
+
+function sanitizeStatusProfile(status) {
+  const profile = status?.payload?.profile;
+  const sanitizedProfile = removeStoredProfileUrl(profile);
+
+  if (sanitizedProfile === profile) {
+    return status;
+  }
+
+  return {
+    ...status,
+    payload: {
+      ...status.payload,
+      profile: sanitizedProfile,
+    },
+  };
+}
+
 const statusReady = (async () => {
   try {
     const stored = await chrome.storage?.local?.get(STATUS_STORAGE_KEY);
     const restoredStatus = stored?.[STATUS_STORAGE_KEY];
     if (restoredStatus?.type === MESSAGE_TYPES.statusUpdate && restoredStatus.payload) {
-      latestStatus = restoredStatus;
+      latestStatus = sanitizeStatusProfile(restoredStatus);
+
+      if (latestStatus !== restoredStatus) {
+        await chrome.storage?.local?.set({ [STATUS_STORAGE_KEY]: latestStatus });
+      }
     }
   } catch (_error) {
     // In-memory status remains available if storage cannot be read.
@@ -42,6 +73,7 @@ const statusReady = (async () => {
 
 async function persistLatestStatus() {
   try {
+    latestStatus = sanitizeStatusProfile(latestStatus);
     await chrome.storage?.local?.set({ [STATUS_STORAGE_KEY]: latestStatus });
   } catch (_error) {
     // Keep the active session working even if persistence is unavailable.
@@ -128,7 +160,6 @@ async function fetchLinkedInImage(url) {
 
 function createEmptyProfile() {
   return {
-    profileUrl: null,
     extractedAt: new Date().toISOString(),
     data: {
       education: [],
@@ -164,7 +195,7 @@ function createStatusMessage(requestId, status, counts, error = null, profile = 
         volunteering: 0,
       },
       error,
-      profile,
+      profile: removeStoredProfileUrl(profile),
     },
   };
 }
